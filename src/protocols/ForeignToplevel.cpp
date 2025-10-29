@@ -30,7 +30,7 @@ CForeignToplevelList::CForeignToplevelList(SP<CExtForeignToplevelListV1> resourc
     m_resource->setStop([this](CExtForeignToplevelListV1* h) {
         m_resource->sendFinished();
         m_finished = true;
-        LOGM(LOG, "CForeignToplevelList: finished");
+        LOGM(Log::DEBUG, "CForeignToplevelList: finished");
     });
 
     for (auto const& w : g_pCompositor->m_windows) {
@@ -45,11 +45,20 @@ void CForeignToplevelList::onMap(PHLWINDOW pWindow) {
     if UNLIKELY (m_finished)
         return;
 
+    // check if the window already had a handle in the past
+    const auto OLDHANDLE = handleForWindow(pWindow);
+    if (OLDHANDLE) {
+        if (!OLDHANDLE->m_closed)
+            OLDHANDLE->m_resource->sendClosed();
+
+        std::erase_if(m_handles, [&](const auto& other) { return other.get() == OLDHANDLE.get(); });
+    }
+
     const auto NEWHANDLE = PROTO::foreignToplevel->m_handles.emplace_back(
         makeShared<CForeignToplevelHandle>(makeShared<CExtForeignToplevelHandleV1>(m_resource->client(), m_resource->version(), 0), pWindow));
 
     if (!NEWHANDLE->good()) {
-        LOGM(ERR, "Couldn't create a foreign handle");
+        LOGM(Log::ERR, "Couldn't create a foreign handle");
         m_resource->noMemory();
         PROTO::foreignToplevel->m_handles.pop_back();
         return;
@@ -57,7 +66,7 @@ void CForeignToplevelList::onMap(PHLWINDOW pWindow) {
 
     const auto IDENTIFIER = std::format("{:08x}->{:016x}", sc<uint32_t>(rc<uintptr_t>(this) & 0xFFFFFFFF), rc<uintptr_t>(pWindow.get()));
 
-    LOGM(LOG, "Newly mapped window gets an identifier of {}", IDENTIFIER);
+    LOGM(Log::DEBUG, "Newly mapped window gets an identifier of {}", IDENTIFIER);
     m_resource->sendToplevel(NEWHANDLE->m_resource.get());
     NEWHANDLE->m_resource->sendIdentifier(IDENTIFIER.c_str());
     NEWHANDLE->m_resource->sendAppId(pWindow->m_initialClass.c_str());
@@ -152,7 +161,7 @@ void CForeignToplevelProtocol::bindManager(wl_client* client, void* data, uint32
     const auto RESOURCE = m_managers.emplace_back(makeUnique<CForeignToplevelList>(makeShared<CExtForeignToplevelListV1>(client, ver, id))).get();
 
     if UNLIKELY (!RESOURCE->good()) {
-        LOGM(ERR, "Couldn't create a foreign list");
+        LOGM(Log::ERR, "Couldn't create a foreign list");
         wl_client_post_no_memory(client);
         m_managers.pop_back();
         return;

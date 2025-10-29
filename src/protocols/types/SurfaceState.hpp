@@ -8,6 +8,31 @@ class CTexture;
 class CDRMSyncPointState;
 class CWLCallbackResource;
 
+enum eLockReason : uint8_t {
+    LOCK_REASON_NONE  = 0,
+    LOCK_REASON_FENCE = 1 << 0,
+    LOCK_REASON_FIFO  = 1 << 1,
+    LOCK_REASON_TIMER = 1 << 2
+};
+
+inline eLockReason operator|(eLockReason a, eLockReason b) {
+    return sc<eLockReason>(sc<uint8_t>(a) | sc<uint8_t>(b));
+}
+inline eLockReason operator&(eLockReason a, eLockReason b) {
+    return sc<eLockReason>(sc<uint8_t>(a) & sc<uint8_t>(b));
+}
+inline eLockReason& operator|=(eLockReason& a, eLockReason b) {
+    a = a | b;
+    return a;
+}
+inline eLockReason& operator&=(eLockReason& a, eLockReason b) {
+    a = a & b;
+    return a;
+}
+inline eLockReason operator~(eLockReason a) {
+    return sc<eLockReason>(~sc<uint8_t>(a));
+}
+
 struct SSurfaceState {
     union {
         uint16_t all = 0;
@@ -57,6 +82,7 @@ struct SSurfaceState {
 
     // drm syncobj protocol surface state
     CDRMSyncPointState acquire;
+    eLockReason        lockMask = LOCK_REASON_NONE;
 
     // texture of surface content, used for rendering
     SP<CTexture> texture;

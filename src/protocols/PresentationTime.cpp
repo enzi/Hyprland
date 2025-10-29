@@ -43,7 +43,7 @@ bool CPresentationFeedback::good() {
 void CPresentationFeedback::sendQueued(WP<CQueuedPresentationData> data, const Time::steady_tp& when, uint32_t untilRefreshNs, uint64_t seq, uint32_t reportedFlags) {
     auto client = m_resource->client();
 
-    if LIKELY (PROTO::outputs.contains(data->m_monitor->m_name)) {
+    if LIKELY (PROTO::outputs.contains(data->m_monitor->m_name) && data->m_wasPresented) {
         if LIKELY (auto outputResource = PROTO::outputs.at(data->m_monitor->m_name)->outputResourceFrom(client); outputResource)
             m_resource->sendSyncOutput(outputResource->getResource()->resource());
     }
@@ -126,7 +126,7 @@ void CPresentationProtocol::onPresented(PHLMONITOR pMonitor, const Time::steady_
     }
 
     if (m_feedbacks.size() > 10000) {
-        LOGM(ERR, "FIXME: presentation has a feedback leak, and has grown to {} pending entries!!! Dropping!!!!!", m_feedbacks.size());
+        LOGM(Log::ERR, "FIXME: presentation has a feedback leak, and has grown to {} pending entries!!! Dropping!!!!!", m_feedbacks.size());
 
         // Move the elements from the 9000th position to the end of the vector.
         std::vector<UP<CPresentationFeedback>> newFeedbacks;

@@ -269,38 +269,38 @@ class CHyprOpenGLImpl {
     void         setDamage(const CRegion& damage, std::optional<CRegion> finalDamage = {});
 
     uint32_t     getPreferredReadFormat(PHLMONITOR pMonitor);
-    std::vector<SDRMFormat>                     getDRMFormats();
-    EGLImageKHR                                 createEGLImage(const Aquamarine::SDMABUFAttrs& attrs);
+    std::vector<SDRMFormat>                           getDRMFormats();
+    EGLImageKHR                                       createEGLImage(const Aquamarine::SDMABUFAttrs& attrs);
 
-    bool                                        initShaders();
+    bool                                              initShaders();
 
-    GLuint                                      createProgram(const std::string&, const std::string&, bool dynamic = false, bool silent = false);
-    GLuint                                      compileShader(const GLuint&, std::string, bool dynamic = false, bool silent = false);
-    void                                        useProgram(GLuint prog);
+    GLuint                                            createProgram(const std::string&, const std::string&, bool dynamic = false, bool silent = false);
+    GLuint                                            compileShader(const GLuint&, std::string, bool dynamic = false, bool silent = false);
+    void                                              useProgram(GLuint prog);
 
-    void                                        ensureLockTexturesRendered(bool load);
+    void                                              ensureLockTexturesRendered(bool load);
 
-    bool                                        explicitSyncSupported();
+    bool                                              explicitSyncSupported();
 
-    bool                                        m_shadersInitialized = false;
-    SP<SPreparedShaders>                        m_shaders;
+    bool                                              m_shadersInitialized = false;
+    SP<SPreparedShaders>                              m_shaders;
 
-    SCurrentRenderData                          m_renderData;
+    SCurrentRenderData                                m_renderData;
 
-    Hyprutils::OS::CFileDescriptor              m_gbmFD;
-    gbm_device*                                 m_gbmDevice      = nullptr;
-    EGLContext                                  m_eglContext     = nullptr;
-    EGLDisplay                                  m_eglDisplay     = nullptr;
-    EGLDeviceEXT                                m_eglDevice      = nullptr;
-    uint                                        m_failedAssetsNo = 0;
+    Hyprutils::OS::CFileDescriptor                    m_gbmFD;
+    gbm_device*                                       m_gbmDevice      = nullptr;
+    EGLContext                                        m_eglContext     = nullptr;
+    EGLDisplay                                        m_eglDisplay     = nullptr;
+    EGLDeviceEXT                                      m_eglDevice      = nullptr;
+    uint                                              m_failedAssetsNo = 0;
 
-    bool                                        m_reloadScreenShader = true; // at launch it can be set
+    bool                                              m_reloadScreenShader = true; // at launch it can be set
 
-    std::map<PHLWINDOWREF, CFramebuffer>        m_windowFramebuffers;
-    std::map<PHLLSREF, CFramebuffer>            m_layerFramebuffers;
-    std::map<WP<CPopup>, CFramebuffer>          m_popupFramebuffers;
-    std::map<PHLMONITORREF, SMonitorRenderData> m_monitorRenderResources;
-    std::map<PHLMONITORREF, CFramebuffer>       m_monitorBGFBs;
+    std::map<PHLWINDOWREF, CFramebuffer>              m_windowFramebuffers;
+    std::map<PHLLSREF, CFramebuffer>                  m_layerFramebuffers;
+    std::map<WP<Desktop::View::CPopup>, CFramebuffer> m_popupFramebuffers;
+    std::map<PHLMONITORREF, SMonitorRenderData>       m_monitorRenderResources;
+    std::map<PHLMONITORREF, CFramebuffer>             m_monitorBGFBs;
 
     struct {
         PFNGLEGLIMAGETARGETRENDERBUFFERSTORAGEOESPROC glEGLImageTargetRenderbufferStorageOES = nullptr;
@@ -355,7 +355,7 @@ class CHyprOpenGLImpl {
         GLsizei height = 0;
     } m_lastViewport;
 
-    std::array<bool, CAP_STATUS_END>  m_capStatus;
+    std::array<bool, CAP_STATUS_END>  m_capStatus = {};
 
     std::vector<SDRMFormat>           m_drmFormats;
     bool                              m_hasModifiers = false;
@@ -390,6 +390,12 @@ class CHyprOpenGLImpl {
     void                              initMissingAssetTexture();
     void                              requestBackgroundResource();
 
+    // for the final shader
+    std::array<CTimer, POINTER_PRESSED_HISTORY_LENGTH>   m_pressedHistoryTimers    = {};
+    std::array<Vector2D, POINTER_PRESSED_HISTORY_LENGTH> m_pressedHistoryPositions = {};
+    GLint                                                m_pressedHistoryKilled    = 0;
+    GLint                                                m_pressedHistoryTouched   = 0;
+
     //
     std::optional<std::vector<uint64_t>> getModsForFormat(EGLint format);
 
@@ -397,9 +403,9 @@ class CHyprOpenGLImpl {
     CFramebuffer* blurMainFramebufferWithDamage(float a, CRegion* damage);
     CFramebuffer* blurFramebufferWithDamage(float a, CRegion* damage, CFramebuffer& source);
 
-    void          passCMUniforms(SShader&, const NColorManagement::SImageDescription& imageDescription, const NColorManagement::SImageDescription& targetImageDescription,
+    void          passCMUniforms(SShader&, const NColorManagement::PImageDescription imageDescription, const NColorManagement::PImageDescription targetImageDescription,
                                  bool modifySDR = false, float sdrMinLuminance = -1.0f, int sdrMaxLuminance = -1);
-    void          passCMUniforms(SShader&, const NColorManagement::SImageDescription& imageDescription);
+    void          passCMUniforms(SShader&, const NColorManagement::PImageDescription imageDescription);
     void          renderTexturePrimitive(SP<CTexture> tex, const CBox& box);
     void          renderSplash(cairo_t* const, cairo_surface_t* const, double offset, const Vector2D& size);
     void          renderRectInternal(const CBox&, const CHyprColor&, const SRectRenderData& data);

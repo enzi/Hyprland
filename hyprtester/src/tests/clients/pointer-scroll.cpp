@@ -8,6 +8,7 @@
 #include <hyprutils/os/Process.hpp>
 
 #include <sys/poll.h>
+#include <unistd.h>
 #include <csignal>
 #include <thread>
 
@@ -42,6 +43,7 @@ static bool startClient(SClient& client) {
     client.readFd = CFileDescriptor(pipeFds2[0]);
     client.proc->setStdoutFD(pipeFds2[1]);
 
+    const int COUNT_BEFORE = Tests::windowCount();
     client.proc->runAsync();
 
     close(pipeFds1[0]);
@@ -62,9 +64,18 @@ static bool startClient(SClient& client) {
     }
 
     // wait for window to appear
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    int counter = 0;
+    while (Tests::processAlive(client.proc->pid()) && Tests::windowCount() == COUNT_BEFORE) {
+        counter++;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    if (getFromSocket(std::format("/dispatch setprop pid:{} noanim 1", client.proc->pid())) != "ok") {
+        if (counter > 50) {
+            NLog::log("{}pointer-scroll client took too long to open", Colors::RED);
+            return false;
+        }
+    }
+
+    if (getFromSocket(std::format("/dispatch setprop pid:{} no_anim 1", client.proc->pid())) != "ok") {
         NLog::log("{}Failed to disable animations for client window", Colors::RED, ret);
         return false;
     }
@@ -130,7 +141,7 @@ static bool test() {
     EXPECT(sendScroll(10), true);
     EXPECT(getLastDelta(client), 30);
 
-    EXPECT(getFromSocket("r/dispatch setprop active scrollmouse 4"), "ok");
+    EXPECT(getFromSocket("r/dispatch setprop active scroll_mouse 4"), "ok");
     EXPECT(sendScroll(10), true);
     EXPECT(getLastDelta(client), 40);
 

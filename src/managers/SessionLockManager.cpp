@@ -4,6 +4,8 @@
 #include "../protocols/FractionalScale.hpp"
 #include "../protocols/SessionLock.hpp"
 #include "../render/Renderer.hpp"
+#include "../desktop/state/FocusState.hpp"
+#include "../desktop/view/SessionLock.hpp"
 #include "./managers/SeatManager.hpp"
 #include "./managers/input/InputManager.hpp"
 #include "./managers/eventLoop/EventLoopManager.hpp"
@@ -25,8 +27,8 @@ SSessionLockSurface::SSessionLockSurface(SP<CSessionLockSurface> surface_) : sur
     });
 
     listeners.destroy = surface_->m_events.destroy.listen([this] {
-        if (pWlrSurface == g_pCompositor->m_lastFocus)
-            g_pCompositor->m_lastFocus.reset();
+        if (pWlrSurface == Desktop::focusState()->surface())
+            Desktop::focusState()->surface().reset();
 
         g_pSessionLockManager->removeSessionLockSurface(this);
     });
@@ -34,7 +36,7 @@ SSessionLockSurface::SSessionLockSurface(SP<CSessionLockSurface> surface_) : sur
     listeners.commit = surface_->m_events.commit.listen([this] {
         const auto PMONITOR = g_pCompositor->getMonitorFromID(iMonitorID);
 
-        if (mapped && !g_pCompositor->m_lastFocus)
+        if (mapped && !Desktop::focusState()->surface())
             g_pInputManager->simulateMouseMovement();
 
         if (PMONITOR)
@@ -50,7 +52,7 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     static auto PALLOWRELOCK = CConfigValue<Hyprlang::INT>("misc:allow_session_lock_restore");
 
     if (PROTO::sessionLock->isLocked() && !*PALLOWRELOCK) {
-        LOGM(LOG, "Cannot re-lock, misc:allow_session_lock_restore is disabled");
+        LOGM(Log::DEBUG, "Cannot re-lock, misc:allow_session_lock_restore is disabled");
         pLock->sendDenied();
         return;
     }
@@ -58,7 +60,7 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     if (m_sessionLock && !clientDenied() && !clientLocked())
         return; // Not allowing to relock in case the old lock is still in a limbo
 
-    LOGM(LOG, "Session got locked by {:x}", (uintptr_t)pLock.get());
+    LOGM(Log::DEBUG, "Session got locked by {:x}", (uintptr_t)pLock.get());
 
     m_sessionLock       = makeUnique<SSessionLock>();
     m_sessionLock->lock = pLock;
@@ -67,9 +69,11 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
     m_sessionLock->listeners.newSurface = pLock->m_events.newLockSurface.listen([this](const SP<CSessionLockSurface>& surface) {
         const auto PMONITOR = surface->monitor();
 
-        const auto NEWSURFACE  = m_sessionLock->vSessionLockSurfaces.emplace_back(makeUnique<SSessionLockSurface>(surface)).get();
+        const auto NEWSURFACE  = m_sessionLock->vSessionLockSurfaces.emplace_back(makeShared<SSessionLockSurface>(surface));
         NEWSURFACE->iMonitorID = PMONITOR->m_id;
         PROTO::fractional->sendScale(surface->surface(), PMONITOR->m_scale);
+
+        g_pCompositor->m_otherViews.emplace_back(Desktop::View::CSessionLock::create(surface));
     });
 
     m_sessionLock->listeners.unlock = pLock->m_events.unlockAndDestroy.listen([this] {
@@ -82,13 +86,13 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
 
     m_sessionLock->listeners.destroy = pLock->m_events.destroyed.listen([this] {
         m_sessionLock.reset();
-        g_pCompositor->focusSurface(nullptr);
+        Desktop::focusState()->rawSurfaceFocus(nullptr);
 
         for (auto const& m : g_pCompositor->m_monitors)
             g_pHyprRenderer->damageMonitor(m);
     });
 
-    g_pCompositor->focusSurface(nullptr);
+    Desktop::focusState()->rawSurfaceFocus(nullptr);
     g_pSeatManager->setGrab(nullptr);
 
     const bool NOACTIVEMONS = std::ranges::all_of(g_pCompositor->m_monitors, [](const auto& m) { return !m->m_enabled || !m->m_dpmsStatus; });
@@ -119,7 +123,7 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
                 return;
             }
 
-            LOGM(WARN, "Kicking lockscreen client, because it failed to render to all outputs within 5 seconds");
+            LOGM(Log::WARN, "Kicking lockscreen client, because it failed to render to all outputs within 5 seconds");
             g_pSessionLockManager->m_sessionLock->lock->sendDenied();
             g_pSessionLockManager->m_sessionLock->hasSentDenied = true;
         },
@@ -196,14 +200,14 @@ void CSessionLockManager::removeSessionLockSurface(SSessionLockSurface* pSLS) {
 
     std::erase_if(m_sessionLock->vSessionLockSurfaces, [&](const auto& other) { return pSLS == other.get(); });
 
-    if (g_pCompositor->m_lastFocus)
+    if (Desktop::focusState()->surface())
         return;
 
     for (auto const& sls : m_sessionLock->vSessionLockSurfaces) {
         if (!sls->mapped)
             continue;
 
-        g_pCompositor->focusSurface(sls->surface->surface());
+        Desktop::focusState()->rawSurfaceFocus(sls->surface->surface());
         break;
     }
 }

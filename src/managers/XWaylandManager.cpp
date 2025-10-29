@@ -1,6 +1,6 @@
 #include "XWaylandManager.hpp"
 #include "../Compositor.hpp"
-#include "../events/Events.hpp"
+#include "../desktop/state/FocusState.hpp"
 #include "../config/ConfigValue.hpp"
 #include "../helpers/Monitor.hpp"
 #include "../protocols/XDGShell.hpp"
@@ -21,22 +21,22 @@ CHyprXWaylandManager::~CHyprXWaylandManager() {
 }
 
 SP<CWLSurfaceResource> CHyprXWaylandManager::getWindowSurface(PHLWINDOW pWindow) {
-    return pWindow ? pWindow->m_wlSurface->resource() : nullptr;
+    return pWindow ? pWindow->wlSurface()->resource() : nullptr;
 }
 
 void CHyprXWaylandManager::activateSurface(SP<CWLSurfaceResource> pSurface, bool activate) {
     if (!pSurface)
         return;
 
-    auto HLSurface = CWLSurface::fromResource(pSurface);
+    auto HLSurface = Desktop::View::CWLSurface::fromResource(pSurface);
     if (!HLSurface) {
-        Debug::log(TRACE, "CHyprXWaylandManager::activateSurface on non-desktop surface, ignoring");
+        Log::logger->log(Log::TRACE, "CHyprXWaylandManager::activateSurface on non-desktop surface, ignoring");
         return;
     }
 
-    const auto PWINDOW = HLSurface->getWindow();
+    const auto PWINDOW = Desktop::View::CWindow::fromView(HLSurface->view());
     if (!PWINDOW) {
-        Debug::log(TRACE, "CHyprXWaylandManager::activateSurface on non-window surface, ignoring");
+        Log::logger->log(Log::TRACE, "CHyprXWaylandManager::activateSurface on non-window surface, ignoring");
         return;
     }
 
@@ -69,8 +69,8 @@ void CHyprXWaylandManager::activateWindow(PHLWINDOW pWindow, bool activate) {
         pWindow->m_xdgSurface->m_toplevel->setActive(activate);
 
     if (activate) {
-        g_pCompositor->m_lastFocus  = getWindowSurface(pWindow);
-        g_pCompositor->m_lastWindow = pWindow;
+        Desktop::focusState()->surface() = getWindowSurface(pWindow);
+        Desktop::focusState()->window()  = pWindow;
     }
 
     if (!pWindow->m_pinned)
@@ -87,6 +87,14 @@ CBox CHyprXWaylandManager::getGeometryForWindow(PHLWINDOW pWindow) {
         box = pWindow->m_xwaylandSurface->m_geometry;
     else if (pWindow->m_xdgSurface)
         box = pWindow->m_xdgSurface->m_current.geometry;
+
+    Vector2D MINSIZE = pWindow->minSize().value_or(Vector2D{MIN_WINDOW_SIZE, MIN_WINDOW_SIZE});
+    Vector2D MAXSIZE = pWindow->maxSize().value_or(Math::VECTOR2D_MAX).clamp(MINSIZE + Vector2D{1, 1});
+
+    Vector2D oldSize = box.size();
+    box.w            = std::clamp(box.w, MINSIZE.x, MAXSIZE.x);
+    box.h            = std::clamp(box.h, MINSIZE.y, MAXSIZE.y);
+    box.translate((oldSize - box.size()) / 2.F);
 
     return box;
 }

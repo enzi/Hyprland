@@ -1,9 +1,10 @@
 #include "defines.hpp"
-#include "debug/Log.hpp"
+#include "debug/log/Logger.hpp"
 #include "Compositor.hpp"
 #include "config/ConfigManager.hpp"
 #include "init/initHelpers.hpp"
 #include "debug/HyprCtl.hpp"
+#include "helpers/env/Env.hpp"
 
 #include <csignal>
 #include <cstdio>
@@ -25,7 +26,7 @@ using namespace Hyprutils::Memory;
 
 static void help() {
     std::println("usage: Hyprland [arg [...]].\n");
-    std::println(R"(Arguments:
+    std::println(R"#(Arguments:
     --help              -h       - Show this message again
     --config FILE       -c FILE  - Specify config file to use
     --socket NAME                - Sets the Wayland socket name (for Wayland socket handover)
@@ -33,7 +34,8 @@ static void help() {
     --systeminfo                 - Prints system infos
     --i-am-really-stupid         - Omits root user privileges check (why would you do that?)
     --verify-config              - Do not run Hyprland, only print if the config has any errors
-    --version           -v       - Print this binary's version)");
+    --version           -v       - Print this binary's version
+    --version-json               - Print this binary's version as json)#");
 }
 
 static void reapZombieChildrenAutomatically() {
@@ -67,7 +69,8 @@ int main(int argc, char** argv) {
     std::string configPath;
     std::string socketName;
     int         socketFd   = -1;
-    bool        ignoreSudo = false, verifyConfig = false;
+    bool        ignoreSudo = false, verifyConfig = false, safeMode = false;
+    int         watchdogFd = -1;
 
     if (argc > 1) {
         std::span<char*> args{argv + 1, sc<std::size_t>(argc - 1)};
@@ -130,7 +133,7 @@ int main(int argc, char** argv) {
                     return 1;
                 }
 
-                Debug::log(LOG, "User-specified config location: '{}'", configPath);
+                Log::logger->log(Log::DEBUG, "User-specified config location: '{}'", configPath);
 
                 it++;
 
@@ -142,12 +145,32 @@ int main(int argc, char** argv) {
             } else if (value == "-v" || value == "--version") {
                 std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
                 return 0;
+            } else if (value == "--version-json") {
+                std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_JSON, ""));
+                return 0;
             } else if (value == "--systeminfo") {
                 std::println("{}", systemInfoRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
                 return 0;
             } else if (value == "--verify-config") {
                 verifyConfig = true;
                 continue;
+            } else if (value == "--safe-mode") {
+                safeMode = true;
+                continue;
+            } else if (value == "--watchdog-fd") {
+                if (std::next(it) == args.end()) {
+                    help();
+                    return 1;
+                }
+
+                try {
+                    watchdogFd = std::stoi(*std::next(it));
+                    it++;
+                } catch (...) {
+                    std::println(stderr, "[ ERROR ] Invalid fd for watchdog fd");
+                    help();
+                    return 1;
+                }
             } else {
                 std::println(stderr, "[ ERROR ] Unknown option '{}' !", value);
                 help();
@@ -189,15 +212,25 @@ int main(int argc, char** argv) {
 
     reapZombieChildrenAutomatically();
 
+    bool watchdogOk = watchdogFd > 0;
+
+    if (watchdogFd > 0)
+        watchdogOk = g_pCompositor->setWatchdogFd(watchdogFd);
+    if (safeMode)
+        g_pCompositor->m_safeMode = true;
+
+    if (!watchdogOk)
+        Log::logger->log(Log::WARN, "WARNING: Hyprland is being launched without start-hyprland. This is highly advised against.");
+
     g_pCompositor->initServer(socketName, socketFd);
 
     if (verifyConfig)
         return !g_pConfigManager->m_lastConfigVerificationWasSuccessful;
 
-    if (!envEnabled("HYPRLAND_NO_RT"))
+    if (!Env::envEnabled("HYPRLAND_NO_RT"))
         NInit::gainRealTime();
 
-    Debug::log(LOG, "Hyprland init finished.");
+    Log::logger->log(Log::DEBUG, "Hyprland init finished.");
 
     // If all's good to go, start.
     g_pCompositor->startCompositor();
@@ -206,7 +239,7 @@ int main(int argc, char** argv) {
 
     g_pCompositor.reset();
 
-    Debug::log(LOG, "Hyprland has reached the end.");
+    Log::logger->log(Log::DEBUG, "Hyprland has reached the end.");
 
     return EXIT_SUCCESS;
 }

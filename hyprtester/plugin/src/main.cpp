@@ -11,7 +11,10 @@
 #include <src/managers/input/InputManager.hpp>
 #include <src/managers/PointerManager.hpp>
 #include <src/managers/input/trackpad/TrackpadGestures.hpp>
+#include <src/desktop/rule/windowRule/WindowRuleEffectContainer.hpp>
+#include <src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <src/Compositor.hpp>
+#include <src/desktop/state/FocusState.hpp>
 #undef private
 
 #include <hyprutils/utils/ScopeGuard.hpp>
@@ -43,7 +46,7 @@ static SDispatchResult test(std::string in) {
 
 // Trigger a snap move event for the active window
 static SDispatchResult snapMove(std::string in) {
-    const auto PLASTWINDOW = g_pCompositor->m_lastWindow.lock();
+    const auto PLASTWINDOW = Desktop::focusState()->window();
     if (!PLASTWINDOW->m_isFloating)
         return {.success = false, .error = "Window must be floating"};
 
@@ -210,7 +213,7 @@ static SDispatchResult scroll(std::string in) {
         by = std::stod(in);
     } catch (...) { return SDispatchResult{.success = false, .error = "invalid input"}; }
 
-    Debug::log(LOG, "tester: scrolling by {}", by);
+    Log::logger->log(Log::DEBUG, "tester: scrolling by {}", by);
 
     g_mouse->m_pointerEvents.axis.emit(IPointer::SAxisEvent{
         .delta         = by,
@@ -221,8 +224,30 @@ static SDispatchResult scroll(std::string in) {
     return {};
 }
 
+static SDispatchResult click(std::string in) {
+    CVarList2 data(std::move(in));
+
+    uint32_t  button;
+    bool      pressed;
+    try {
+        button  = std::stoul(std::string{data[0]});
+        pressed = std::stoul(std::string{data[1]}) == 1;
+    } catch (...) { return {.success = false, .error = "invalid input"}; }
+
+    Log::logger->log(Log::DEBUG, "tester: mouse button {} state {}", button, pressed);
+
+    g_mouse->m_pointerEvents.button.emit(IPointer::SButtonEvent{
+        .timeMs = sc<uint32_t>(Time::millis(Time::steadyNow())),
+        .button = button,
+        .state  = pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED,
+        .mouse  = true,
+    });
+
+    return {};
+}
+
 static SDispatchResult keybind(std::string in) {
-    CVarList data(in);
+    CVarList2 data(std::move(in));
     // 0 = release, 1 = press
     bool press;
     // See src/devices/IKeyboard.hpp : eKeyboardModifiers for modifier bitmasks
@@ -231,9 +256,9 @@ static SDispatchResult keybind(std::string in) {
     // keycode
     uint32_t key;
     try {
-        press    = std::stoul(data[0]) == 1;
-        modifier = std::stoul(data[1]);
-        key      = std::stoul(data[2]) - 8; // xkb offset
+        press    = std::stoul(std::string{data[0]}) == 1;
+        modifier = std::stoul(std::string{data[1]});
+        key      = std::stoul(std::string{data[2]}) - 8; // xkb offset
     } catch (...) { return {.success = false, .error = "invalid input"}; }
 
     uint32_t modifierMask = 0;
@@ -241,6 +266,32 @@ static SDispatchResult keybind(std::string in) {
         modifierMask = 1 << (modifier - 1);
     g_pInputManager->m_lastMods = modifierMask;
     g_keyboard->sendKey(key, press);
+
+    return {};
+}
+
+static Desktop::Rule::CWindowRuleEffectContainer::storageType ruleIDX = 0;
+
+//
+static SDispatchResult addRule(std::string in) {
+    ruleIDX = Desktop::Rule::windowEffects()->registerEffect("plugin_rule");
+
+    if (Desktop::Rule::windowEffects()->registerEffect("plugin_rule") != ruleIDX)
+        return {.success = false, .error = "re-registering returned a different id?"};
+    return {};
+}
+
+static SDispatchResult checkRule(std::string in) {
+    const auto PLASTWINDOW = Desktop::focusState()->window();
+
+    if (!PLASTWINDOW)
+        return {.success = false, .error = "No window"};
+
+    if (!PLASTWINDOW->m_ruleApplicator->m_otherProps.props.contains(ruleIDX))
+        return {.success = false, .error = "No rule"};
+
+    if (PLASTWINDOW->m_ruleApplicator->m_otherProps.props[ruleIDX]->effect != "effect")
+        return {.success = false, .error = "Effect isn't \"effect\""};
 
     return {};
 }
@@ -254,7 +305,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:alt", ::pressAlt);
     HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:gesture", ::simulateGesture);
     HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:scroll", ::scroll);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:click", ::click);
     HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:keybind", ::keybind);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:add_rule", ::addRule);
+    HyprlandAPI::addDispatcherV2(PHANDLE, "plugin:test:check_rule", ::checkRule);
 
     // init mouse
     g_mouse = CTestMouse::create(false);

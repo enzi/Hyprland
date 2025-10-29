@@ -6,8 +6,9 @@
 #include "../protocols/PrimarySelection.hpp"
 #include "../protocols/core/Compositor.hpp"
 #include "../Compositor.hpp"
+#include "../desktop/state/FocusState.hpp"
 #include "../devices/IKeyboard.hpp"
-#include "../desktop/LayerSurface.hpp"
+#include "../desktop/view/LayerSurface.hpp"
 #include "../managers/input/InputManager.hpp"
 #include "../managers/HookSystemManager.hpp"
 #include "wlr-layer-shell-unstable-v1.hpp"
@@ -113,7 +114,7 @@ void CSeatManager::setKeyboardFocus(SP<CWLSurfaceResource> surf) {
         return;
 
     if (!m_keyboard) {
-        Debug::log(ERR, "BUG THIS: setKeyboardFocus without a valid keyboard set");
+        Log::logger->log(Log::ERR, "BUG THIS: setKeyboardFocus without a valid keyboard set");
         return;
     }
 
@@ -216,14 +217,14 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
     if (PROTO::data->dndActive() && surf) {
         if (m_state.dndPointerFocus == surf)
             return;
-        Debug::log(LOG, "[seatmgr] Refusing pointer focus during an active dnd, but setting dndPointerFocus");
+        Log::logger->log(Log::DEBUG, "[seatmgr] Refusing pointer focus during an active dnd, but setting dndPointerFocus");
         m_state.dndPointerFocus = surf;
         m_events.dndPointerFocusChange.emit();
         return;
     }
 
     if (!m_mouse) {
-        Debug::log(ERR, "BUG THIS: setPointerFocus without a valid mouse set");
+        Log::logger->log(Log::ERR, "BUG THIS: setPointerFocus without a valid mouse set");
         return;
     }
 
@@ -516,7 +517,7 @@ void CSeatManager::refocusGrab() {
         // try to find a surf in focus first
         const auto MOUSE = g_pInputManager->getMouseCoordsInternal();
         for (auto const& s : m_seatGrab->m_surfs) {
-            auto hlSurf = CWLSurface::fromResource(s.lock());
+            auto hlSurf = Desktop::View::CWLSurface::fromResource(s.lock());
             if (!hlSurf)
                 continue;
 
@@ -544,13 +545,13 @@ void CSeatManager::refocusGrab() {
 
 void CSeatManager::onSetCursor(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surf, const Vector2D& hotspot) {
     if (!m_state.pointerFocusResource || !seatResource || seatResource->client() != m_state.pointerFocusResource->client()) {
-        Debug::log(LOG, "[seatmgr] Rejecting a setCursor because the client ain't in focus");
+        Log::logger->log(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the client ain't in focus");
         return;
     }
 
     // TODO: fix this. Probably should be done in the CWlPointer as the serial could be lost by us.
     // if (!serialValid(seatResource, serial)) {
-    //     Debug::log(LOG, "[seatmgr] Rejecting a setCursor because the serial is invalid");
+    //     Log::logger->log(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the serial is invalid");
     //     return;
     // }
 
@@ -563,7 +564,7 @@ SP<CWLSeatResource> CSeatManager::seatResourceForClient(wl_client* client) {
 
 void CSeatManager::setCurrentSelection(SP<IDataSource> source) {
     if (source == m_selection.currentSelection) {
-        Debug::log(WARN, "[seat] duplicated setCurrentSelection?");
+        Log::logger->log(Log::WARN, "[seat] duplicated setCurrentSelection?");
         return;
     }
 
@@ -589,7 +590,7 @@ void CSeatManager::setCurrentSelection(SP<IDataSource> source) {
 
 void CSeatManager::setCurrentPrimarySelection(SP<IDataSource> source) {
     if (source == m_selection.currentPrimarySelection) {
-        Debug::log(WARN, "[seat] duplicated setCurrentPrimarySelection?");
+        Log::logger->log(Log::WARN, "[seat] duplicated setCurrentPrimarySelection?");
         return;
     }
 
@@ -616,25 +617,72 @@ void CSeatManager::setCurrentPrimarySelection(SP<IDataSource> source) {
 void CSeatManager::setGrab(SP<CSeatGrab> grab) {
     if (m_seatGrab) {
         auto oldGrab = m_seatGrab;
+
+        // Try to find the parent window from the grab
+        PHLWINDOW parentWindow;
+        if (oldGrab && oldGrab->m_surfs.size()) {
+            // Try to find the surface that had focus when the grab ended
+            SP<CWLSurfaceResource> focusedSurf;
+            auto                   keyboardFocus = m_state.keyboardFocus.lock();
+            auto                   pointerFocus  = m_state.pointerFocus.lock();
+
+            // Check if keyboard or pointer focus is in the grab
+            for (auto const& s : oldGrab->m_surfs) {
+                auto surf = s.lock();
+                if (surf && (surf == keyboardFocus || surf == pointerFocus)) {
+                    focusedSurf = surf;
+                    break;
+                }
+            }
+
+            // Fall back to first surface if no focused surface found
+            if (!focusedSurf)
+                focusedSurf = oldGrab->m_surfs.front().lock();
+
+            if (focusedSurf) {
+                auto hlSurface = Desktop::View::CWLSurface::fromResource(focusedSurf);
+                if (hlSurface) {
+                    auto popup = Desktop::View::CPopup::fromView(hlSurface->view());
+                    if (popup) {
+                        auto t1Owner = popup->getT1Owner();
+                        if (t1Owner)
+                            parentWindow = Desktop::View::CWindow::fromView(t1Owner->view());
+                    }
+                }
+            }
+        }
+
         m_seatGrab.reset();
-        g_pInputManager->refocus();
 
-        auto           currentFocus = m_state.keyboardFocus.lock();
-        auto           refocus      = !currentFocus;
+        static auto PFOLLOWMOUSE = CConfigValue<Hyprlang::INT>("input:follow_mouse");
+        if (*PFOLLOWMOUSE == 0 || *PFOLLOWMOUSE == 2 || *PFOLLOWMOUSE == 3) {
+            const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
 
-        SP<CWLSurface> surf;
-        PHLLS          layer;
+            // If this was a popup grab, focus its parent window to maintain context
+            if (validMapped(parentWindow)) {
+                Desktop::focusState()->rawWindowFocus(parentWindow);
+                Log::logger->log(Log::DEBUG, "[seatmgr] Refocused popup parent window {} (follow_mouse={})", parentWindow->m_title, *PFOLLOWMOUSE);
+            } else
+                g_pInputManager->refocusLastWindow(PMONITOR);
+        } else
+            g_pInputManager->refocus();
+
+        auto                          currentFocus = m_state.keyboardFocus.lock();
+        auto                          refocus      = !currentFocus;
+
+        SP<Desktop::View::CWLSurface> surf;
+        PHLLS                         layer;
 
         if (!refocus) {
-            surf  = CWLSurface::fromResource(currentFocus);
-            layer = surf ? surf->getLayer() : nullptr;
+            surf  = Desktop::View::CWLSurface::fromResource(currentFocus);
+            layer = surf ? Desktop::View::CLayerSurface::fromView(surf->view()) : nullptr;
         }
 
         if (!refocus && !layer) {
-            auto popup = surf ? surf->getPopup() : nullptr;
+            auto popup = surf ? Desktop::View::CPopup::fromView(surf->view()) : nullptr;
             if (popup) {
                 auto parent = popup->getT1Owner();
-                layer       = parent->getLayer();
+                layer       = Desktop::View::CLayerSurface::fromView(parent->view());
             }
         }
 
@@ -642,10 +690,10 @@ void CSeatManager::setGrab(SP<CSeatGrab> grab) {
             refocus = layer->m_interactivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
 
         if (refocus) {
-            auto candidate = g_pCompositor->m_lastWindow.lock();
+            auto candidate = Desktop::focusState()->window();
 
             if (candidate)
-                g_pCompositor->focusWindow(candidate);
+                Desktop::focusState()->rawWindowFocus(candidate);
         }
 
         if (oldGrab->m_onEnd)

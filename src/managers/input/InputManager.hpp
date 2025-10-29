@@ -7,6 +7,7 @@
 #include "../../helpers/time/Timer.hpp"
 #include "InputMethodRelay.hpp"
 #include "../../helpers/signal/Signal.hpp"
+#include "../../desktop/view/WLSurface.hpp"
 #include "../../devices/IPointer.hpp"
 #include "../../devices/ITouch.hpp"
 #include "../../devices/IKeyboard.hpp"
@@ -15,7 +16,6 @@
 #include "../SeatManager.hpp"
 
 class CPointerConstraint;
-class CWindow;
 class CIdleInhibitor;
 class CVirtualKeyboardV1Resource;
 class CVirtualPointerV1Resource;
@@ -194,11 +194,7 @@ class CInputManager {
     uint32_t                     getModsFromAllKBs();
 
     // for virtual keyboards: whether we should respect them as normal ones
-    bool shouldIgnoreVirtualKeyboard(SP<IKeyboard>);
-
-    // for special cursors that we choose
-    void        setCursorImageUntilUnset(std::string);
-    void        unsetCursorImage();
+    bool        shouldIgnoreVirtualKeyboard(SP<IKeyboard>);
 
     std::string getNameForNewDevice(std::string);
 
@@ -212,6 +208,9 @@ class CInputManager {
 
     // for hiding cursor on touch
     bool m_lastInputTouch = false;
+
+    // for hiding cursor on tablet
+    bool m_lastInputTablet = false;
 
     // for tracking mouse refocus
     PHLWINDOWREF m_lastMouseFocus;
@@ -227,6 +226,7 @@ class CInputManager {
         CHyprSignalListener newVirtualKeyboard;
         CHyprSignalListener newVirtualMouse;
         CHyprSignalListener setCursor;
+        CHyprSignalListener overrideChanged;
     } m_listeners;
 
     bool                 m_cursorImageOverridden = false;
@@ -283,16 +283,12 @@ class CInputManager {
     void                            setBorderCursorIcon(eBorderIconDirection);
     void                            setCursorIconOnBorder(PHLWINDOW w);
 
-    // temporary. Obeys setUntilUnset.
-    void setCursorImageOverride(const std::string& name);
-
     // cursor surface
     struct {
-        bool           hidden = false; // null surface = hidden
-        SP<CWLSurface> wlSurface;
-        Vector2D       vHotspot;
-        std::string    name; // if not empty, means set by name.
-        bool           inUse = false;
+        bool                          hidden = false; // null surface = hidden
+        SP<Desktop::View::CWLSurface> wlSurface;
+        Vector2D                      vHotspot;
+        std::string                   name; // if not empty, means set by name.
     } m_cursorSurfaceInfo;
 
     void restoreCursorIconToApp(); // no-op if restored
@@ -311,7 +307,7 @@ class CInputManager {
     uint32_t              m_lastMods = 0;
 
     friend class CKeybindManager;
-    friend class CWLSurface;
+    friend class Desktop::View::CWLSurface;
     friend class CWorkspaceSwipeGesture;
 };
 

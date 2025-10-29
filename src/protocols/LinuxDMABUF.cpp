@@ -83,7 +83,7 @@ CDMABUFFormatTable::CDMABUFFormatTable(SDMABUFTranche _rendererTranche, std::vec
     auto arr = sc<SDMABUFFormatTableEntry*>(mmap(nullptr, m_tableSize, PROT_READ | PROT_WRITE, MAP_SHARED, fds[0].get(), 0));
 
     if (arr == MAP_FAILED) {
-        LOGM(ERR, "mmap failed");
+        LOGM(Log::ERR, "mmap failed");
         return;
     }
 
@@ -103,6 +103,9 @@ CLinuxDMABuffer::CLinuxDMABuffer(uint32_t id, wl_client* client, Aquamarine::SDM
         m_listeners.bufferResourceDestroy.reset();
         PROTO::linuxDma->destroyResource(this);
     });
+
+    if (!m_buffer->m_success)
+        LOGM(Log::ERR, "Possibly compositor bug: buffer failed to create");
 }
 
 CLinuxDMABuffer::~CLinuxDMABuffer() {
@@ -158,7 +161,7 @@ CLinuxDMABUFParamsResource::CLinuxDMABUFParamsResource(UP<CZwpLinuxBufferParamsV
 
         if (flags > 0) {
             r->sendFailed();
-            LOGM(ERR, "DMABUF flags are not supported");
+            LOGM(Log::ERR, "DMABUF flags are not supported");
             return;
         }
 
@@ -177,7 +180,7 @@ CLinuxDMABUFParamsResource::CLinuxDMABUFParamsResource(UP<CZwpLinuxBufferParamsV
 
         if (flags > 0) {
             r->sendFailed();
-            LOGM(ERR, "DMABUF flags are not supported");
+            LOGM(Log::ERR, "DMABUF flags are not supported");
             return;
         }
 
@@ -197,24 +200,24 @@ void CLinuxDMABUFParamsResource::create(uint32_t id) {
     m_used = true;
 
     if UNLIKELY (!verify()) {
-        LOGM(ERR, "Failed creating a dmabuf: verify() said no");
+        LOGM(Log::ERR, "Failed creating a dmabuf: verify() said no");
         return; // if verify failed, we errored the resource.
     }
 
     if UNLIKELY (!commence()) {
-        LOGM(ERR, "Failed creating a dmabuf: commence() said no");
+        LOGM(Log::ERR, "Failed creating a dmabuf: commence() said no");
         m_resource->sendFailed();
         return;
     }
 
-    LOGM(LOG, "Creating a dmabuf, with id {}: size {}, fmt {}, planes {}", id, m_attrs->size, NFormatUtils::drmFormatName(m_attrs->format), m_attrs->planes);
+    LOGM(Log::DEBUG, "Creating a dmabuf, with id {}: size {}, fmt {}, planes {}", id, m_attrs->size, NFormatUtils::drmFormatName(m_attrs->format), m_attrs->planes);
     for (int i = 0; i < m_attrs->planes; ++i) {
-        LOGM(LOG, " | plane {}: mod {} fd {} stride {} offset {}", i, m_attrs->modifier, m_attrs->fds[i], m_attrs->strides[i], m_attrs->offsets[i]);
+        LOGM(Log::DEBUG, " | plane {}: mod {} fd {} stride {} offset {}", i, m_attrs->modifier, m_attrs->fds[i], m_attrs->strides[i], m_attrs->offsets[i]);
     }
 
     auto& buf = PROTO::linuxDma->m_buffers.emplace_back(makeUnique<CLinuxDMABuffer>(id, m_resource->client(), *m_attrs));
 
-    if UNLIKELY (!buf->good()) {
+    if UNLIKELY (!buf->good() || !buf->m_buffer->m_success) {
         m_resource->sendFailed();
         PROTO::linuxDma->m_buffers.pop_back();
         return;
@@ -234,12 +237,12 @@ bool CLinuxDMABUFParamsResource::commence() {
         uint32_t handle = 0;
 
         if (drmPrimeFDToHandle(PROTO::linuxDma->m_mainDeviceFD.get(), m_attrs->fds.at(i), &handle)) {
-            LOGM(ERR, "Failed to import dmabuf fd");
+            LOGM(Log::ERR, "Failed to import dmabuf fd");
             return false;
         }
 
         if (drmCloseBufferHandle(PROTO::linuxDma->m_mainDeviceFD.get(), handle)) {
-            LOGM(ERR, "Failed to close dmabuf handle");
+            LOGM(Log::ERR, "Failed to close dmabuf handle");
             return false;
         }
     }
@@ -409,7 +412,7 @@ CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const 
         auto dev        = devIDFromFD(rendererFD);
 
         if (!dev.has_value()) {
-            LOGM(ERR, "failed to get drm dev, disabling linux dmabuf");
+            LOGM(Log::ERR, "failed to get drm dev, disabling linux dmabuf");
             removeGlobal();
             return;
         }
@@ -459,7 +462,7 @@ CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const 
 
         drmDevice* device = nullptr;
         if (drmGetDeviceFromDevId(m_mainDevice, 0, &device) != 0) {
-            LOGM(ERR, "failed to get drm dev, disabling linux dmabuf");
+            LOGM(Log::ERR, "failed to get drm dev, disabling linux dmabuf");
             removeGlobal();
             return;
         }
@@ -469,7 +472,7 @@ CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const 
             m_mainDeviceFD = CFileDescriptor{fcntl(g_pCompositor->m_drmRenderNode.fd, F_DUPFD_CLOEXEC, 0)};
             drmFreeDevice(&device);
             if (!m_mainDeviceFD.isValid()) {
-                LOGM(ERR, "failed to open rendernode, disabling linux dmabuf");
+                LOGM(Log::ERR, "failed to open rendernode, disabling linux dmabuf");
                 removeGlobal();
                 return;
             }
@@ -482,12 +485,12 @@ CLinuxDMABufV1Protocol::CLinuxDMABufV1Protocol(const wl_interface* iface, const 
             m_mainDeviceFD   = CFileDescriptor{open(name, O_RDWR | O_CLOEXEC)};
             drmFreeDevice(&device);
             if (!m_mainDeviceFD.isValid()) {
-                LOGM(ERR, "failed to open drm dev, disabling linux dmabuf");
+                LOGM(Log::ERR, "failed to open drm dev, disabling linux dmabuf");
                 removeGlobal();
                 return;
             }
         } else {
-            LOGM(ERR, "DRM device {} has no render node, disabling linux dmabuf checks", device->nodes[DRM_NODE_PRIMARY] ? device->nodes[DRM_NODE_PRIMARY] : "null");
+            LOGM(Log::ERR, "DRM device {} has no render node, disabling linux dmabuf checks", device->nodes[DRM_NODE_PRIMARY] ? device->nodes[DRM_NODE_PRIMARY] : "null");
             drmFreeDevice(&device);
         }
     });
@@ -497,7 +500,7 @@ void CLinuxDMABufV1Protocol::resetFormatTable() {
     if (!m_formatTable)
         return;
 
-    LOGM(LOG, "Resetting format table");
+    LOGM(Log::DEBUG, "Resetting format table");
 
     // this might be a big copy
     auto newFormatTable = makeUnique<CDMABUFFormatTable>(m_formatTable->m_rendererTranche, m_formatTable->m_monitorTranches);
@@ -506,14 +509,18 @@ void CLinuxDMABufV1Protocol::resetFormatTable() {
         feedback->m_resource->sendFormatTable(newFormatTable->m_tableFD.get(), newFormatTable->m_tableSize);
         if (feedback->m_lastFeedbackWasScanout) {
             PHLMONITOR mon;
-            auto       HLSurface = CWLSurface::fromResource(feedback->m_surface);
-            if (auto w = HLSurface->getWindow(); w)
+            auto       HLSurface = Desktop::View::CWLSurface::fromResource(feedback->m_surface);
+            if (!HLSurface) {
+                feedback->sendDefaultFeedback();
+                continue;
+            }
+            if (auto w = Desktop::View::CWindow::fromView(HLSurface->view()); w)
                 if (auto m = w->m_monitor.lock(); m)
                     mon = m->m_self.lock();
 
             if (!mon) {
                 feedback->sendDefaultFeedback();
-                return;
+                continue;
             }
 
             updateScanoutTranche(feedback->m_surface, mon);
@@ -563,12 +570,12 @@ void CLinuxDMABufV1Protocol::updateScanoutTranche(SP<CWLSurfaceResource> surface
     }
 
     if (!feedbackResource) {
-        LOGM(LOG, "updateScanoutTranche: surface has no dmabuf_feedback");
+        LOGM(Log::DEBUG, "updateScanoutTranche: surface has no dmabuf_feedback");
         return;
     }
 
     if (!pMonitor) {
-        LOGM(LOG, "updateScanoutTranche: resetting feedback");
+        LOGM(Log::DEBUG, "updateScanoutTranche: resetting feedback");
         feedbackResource->sendDefaultFeedback();
         return;
     }
@@ -577,13 +584,13 @@ void CLinuxDMABufV1Protocol::updateScanoutTranche(SP<CWLSurfaceResource> surface
         std::ranges::find_if(m_formatTable->m_monitorTranches, [pMonitor](std::pair<PHLMONITORREF, SDMABUFTranche> pair) { return pair.first == pMonitor; });
 
     if (monitorTranchePair == m_formatTable->m_monitorTranches.end()) {
-        LOGM(LOG, "updateScanoutTranche: monitor has no tranche");
+        LOGM(Log::DEBUG, "updateScanoutTranche: monitor has no tranche");
         return;
     }
 
     auto& monitorTranche = (*monitorTranchePair).second;
 
-    LOGM(LOG, "updateScanoutTranche: sending a scanout tranche");
+    LOGM(Log::DEBUG, "updateScanoutTranche: sending a scanout tranche");
 
     struct wl_array deviceArr = {
         .size = sizeof(m_mainDevice),

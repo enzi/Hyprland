@@ -4,7 +4,6 @@
 #include "../managers/input/InputManager.hpp"
 #include <any>
 
-class CWindow;
 class CGradientValueData;
 
 struct SWindowRenderLayoutHints {
@@ -224,6 +223,17 @@ class IHyprLayout {
         Triggers a window snap event
     */
     virtual void performSnap(Vector2D& sourcePos, Vector2D& sourceSize, PHLWINDOW DRAGGINGWINDOW, const eMouseBindMode MODE, const int CORNER, const Vector2D& BEGINSIZE);
+
+    /*
+        Fits a floating window on its monitor
+    */
+    virtual void fitFloatingWindowOnMonitor(PHLWINDOW w, std::optional<CBox> targetBox = std::nullopt);
+
+    /*
+        Returns a logical box describing the work area on a workspace
+        (monitor size - reserved - gapsOut)
+    */
+    virtual CBox workAreaOnWorkspace(const PHLWORKSPACE& pWorkspace);
 
   private:
     int          m_mouseMoveEventCount;
