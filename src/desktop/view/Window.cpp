@@ -1582,6 +1582,49 @@ bool CWindow::isModal() {
     return (m_xwaylandSurface && m_xwaylandSurface->m_modal);
 }
 
+bool CWindow::isX11Popup() {
+    if (!m_isX11 || !m_xwaylandSurface)
+        return false;
+
+    for (auto const& a : m_xwaylandSurface->m_atoms) {
+        if (a == HYPRATOMS["_NET_WM_WINDOW_TYPE_POPUP_MENU"] ||
+            a == HYPRATOMS["_NET_WM_WINDOW_TYPE_DROPDOWN_MENU"] ||
+            a == HYPRATOMS["_NET_WM_WINDOW_TYPE_MENU"] ||
+            a == HYPRATOMS["_NET_WM_WINDOW_TYPE_COMBO"])
+            return true;
+    }
+
+    return false;
+}
+
+Vector2D CWindow::requestedMinSize() {
+    bool hasSizeHints = m_xwaylandSurface ? m_xwaylandSurface->m_sizeHints : false;
+    bool hasTopLevel  = m_xdgSurface ? m_xdgSurface->m_toplevel : false;
+    if ((m_isX11 && !hasSizeHints) || (!m_isX11 && !hasTopLevel))
+        return Vector2D(1, 1);
+
+    Vector2D minSize = m_isX11 ? Vector2D(m_xwaylandSurface->m_sizeHints->min_width, m_xwaylandSurface->m_sizeHints->min_height) : m_xdgSurface->m_toplevel->layoutMinSize();
+
+    minSize = minSize.clamp({1, 1});
+
+    return minSize;
+}
+
+Vector2D CWindow::requestedMaxSize() {
+    constexpr int NO_MAX_SIZE_LIMIT = 99999;
+    if (((m_isX11 && !m_xwaylandSurface->m_sizeHints) || (!m_isX11 && (!m_xdgSurface || !m_xdgSurface->m_toplevel)) || m_windowData.noMaxSize.valueOrDefault()))
+        return Vector2D(NO_MAX_SIZE_LIMIT, NO_MAX_SIZE_LIMIT);
+
+    Vector2D maxSize = m_isX11 ? Vector2D(m_xwaylandSurface->m_sizeHints->max_width, m_xwaylandSurface->m_sizeHints->max_height) : m_xdgSurface->m_toplevel->layoutMaxSize();
+
+    if (maxSize.x < 5)
+        maxSize.x = NO_MAX_SIZE_LIMIT;
+    if (maxSize.y < 5)
+        maxSize.y = NO_MAX_SIZE_LIMIT;
+
+    return maxSize;
+}
+
 Vector2D CWindow::realToReportSize() {
     if (!m_isX11)
         return m_realSize->goal().clamp(Vector2D{0, 0}, Math::VECTOR2D_MAX);
