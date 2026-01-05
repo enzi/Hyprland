@@ -35,11 +35,15 @@
       inputs.systems.follows = "systems";
     };
 
-    hyprland-qtutils = {
-      url = "github:hyprwm/hyprland-qtutils";
+    hyprland-guiutils = {
+      url = "github:hyprwm/hyprland-guiutils";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
+      inputs.aquamarine.follows = "aquamarine";
+      inputs.hyprgraphics.follows = "hyprgraphics";
+      inputs.hyprutils.follows = "hyprutils";
       inputs.hyprlang.follows = "hyprlang";
+      inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
     };
 
     hyprlang = {
@@ -59,6 +63,13 @@
       url = "github:hyprwm/hyprwayland-scanner";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
+    };
+
+    hyprwire = {
+      url = "github:hyprwm/hyprwire";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+      inputs.hyprutils.follows = "hyprutils";
     };
 
     xdph = {
@@ -148,7 +159,7 @@
         # hyprland-packages
         hyprland
         hyprland-unwrapped
-        hyprtester
+        hyprland-with-tests
         # hyprland-extras
         xdg-desktop-portal-hyprland
         ;

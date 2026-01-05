@@ -2,14 +2,14 @@
 #include "../SessionLockManager.hpp"
 #include "../../protocols/SessionLock.hpp"
 #include "../../Compositor.hpp"
-#include "../../desktop/LayerSurface.hpp"
+#include "../../desktop/view/LayerSurface.hpp"
+#include "../../desktop/state/FocusState.hpp"
 #include "../../config/ConfigValue.hpp"
 #include "../../helpers/Monitor.hpp"
 #include "../../devices/ITouch.hpp"
 #include "../SeatManager.hpp"
-#include "managers/animation/AnimationManager.hpp"
 #include "../HookSystemManager.hpp"
-#include "debug/Log.hpp"
+#include "debug/log/Logger.hpp"
 #include "UnifiedWorkspaceSwipeGesture.hpp"
 
 void CInputManager::onTouchDown(ITouch::SDownEvent e) {
@@ -26,7 +26,7 @@ void CInputManager::onTouchDown(ITouch::SDownEvent e) {
 
     auto PMONITOR = g_pCompositor->getMonitorFromName(!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "");
 
-    PMONITOR = PMONITOR ? PMONITOR : g_pCompositor->m_lastMonitor.lock();
+    PMONITOR = PMONITOR ? PMONITOR : Desktop::focusState()->monitor();
 
     const auto TOUCH_COORDS = PMONITOR->m_position + (e.pos * PMONITOR->m_size);
 
@@ -66,7 +66,7 @@ void CInputManager::onTouchDown(ITouch::SDownEvent e) {
     if (g_pSessionLockManager->isSessionLocked() && m_foundLSToFocus.expired()) {
         m_touchData.touchFocusLockSurface = g_pSessionLockManager->getSessionLockSurfaceForMonitor(PMONITOR->m_id);
         if (!m_touchData.touchFocusLockSurface)
-            Debug::log(WARN, "The session is locked but can't find a lock surface");
+            Log::logger->log(Log::WARN, "The session is locked but can't find a lock surface");
         else
             m_touchData.touchFocusSurface = m_touchData.touchFocusLockSurface->surface->surface();
     } else {
@@ -123,6 +123,8 @@ void CInputManager::onTouchUp(ITouch::SUpEvent e) {
 
 void CInputManager::onTouchMove(ITouch::SMotionEvent e) {
     m_lastInputTouch = true;
+
+    m_lastCursorMovement.reset();
 
     EMIT_HOOK_EVENT_CANCELLABLE("touchMove", e);
     if (g_pUnifiedWorkspaceSwipe->isGestureInProgress()) {

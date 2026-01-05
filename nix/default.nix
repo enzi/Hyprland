@@ -11,14 +11,16 @@
   cairo,
   epoll-shim,
   git,
-  glaze,
+  glaze-hyprland,
+  gtest,
   hyprcursor,
   hyprgraphics,
   hyprland-protocols,
-  hyprland-qtutils,
+  hyprland-guiutils,
   hyprlang,
   hyprutils,
   hyprwayland-scanner,
+  hyprwire,
   libGL,
   libdrm,
   libexecinfo,
@@ -26,6 +28,7 @@
   libxkbcommon,
   libuuid,
   libgbm,
+  muparser,
   pango,
   pciutils,
   re2,
@@ -38,6 +41,7 @@
   xorg,
   xwayland,
   debug ? false,
+  withTests ? false,
   enableXWayland ? true,
   withSystemd ? lib.meta.availableOn stdenv.hostPlatform systemd,
   wrapRuntimeDeps ? true,
@@ -50,6 +54,7 @@
   nvidiaPatches ? false,
   hidpiXWayland ? false,
   legacyRenderer ? false,
+  withHyprtester ? false,
 }: let
   inherit (builtins) foldl' readFile;
   inherit (lib.asserts) assertMsg;
@@ -69,9 +74,10 @@ in
   assert assertMsg (!enableNvidiaPatches) "The option `enableNvidiaPatches` has been removed.";
   assert assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hypr.land/Configuring/XWayland";
   assert assertMsg (!legacyRenderer) "The option `legacyRenderer` has been removed. Legacy renderer is no longer supported.";
+  assert assertMsg (!withHyprtester) "The option `withHyprtester` has been removed. Hyprtester is always built now.";
     customStdenv.mkDerivation (finalAttrs: {
       pname = "hyprland${optionalString debug "-debug"}";
-      inherit version;
+      inherit version withTests;
 
       src = fs.toSource {
         root = ../.;
@@ -79,7 +85,7 @@ in
           fs.intersection
           # allows non-flake builds to only include files tracked by git
           (fs.gitTracked ../.)
-          (fs.unions [
+          (fs.unions (flatten [
             ../assets/hyprland-portals.conf
             ../assets/install
             ../hyprctl
@@ -87,28 +93,33 @@ in
             ../LICENSE
             ../protocols
             ../src
+            ../start
             ../systemd
             ../VERSION
             (fs.fileFilter (file: file.hasExt "1") ../docs)
-            (fs.fileFilter (file: file.hasExt "conf" || file.hasExt "desktop") ../example)
+            (fs.fileFilter (file: file.hasExt "conf" || file.hasExt "in") ../example)
             (fs.fileFilter (file: file.hasExt "sh") ../scripts)
             (fs.fileFilter (file: file.name == "CMakeLists.txt") ../.)
-          ]);
+            (optional withTests [../tests ../hyprtester])
+          ]));
       };
 
       postPatch = ''
         # Fix hardcoded paths to /usr installation
         sed -i "s#/usr#$out#" src/render/OpenGL.cpp
 
-        # Remove extra @PREFIX@ to fix pkg-config paths
+        # Remove extra @PREFIX@ to fix some paths
         sed -i "s#@PREFIX@/##g" hyprland.pc.in
+        sed -i "s#@PREFIX@/##g" example/hyprland.desktop.in
       '';
 
-      COMMITS = revCount;
-      DATE = date;
-      DIRTY = optionalString (commit == "") "dirty";
-      HASH = commit;
-      TAG = "v${trim (readFile "${finalAttrs.src}/VERSION")}";
+      env = {
+        GIT_COMMITS = revCount;
+        GIT_COMMIT_DATE = date;
+        GIT_COMMIT_HASH = commit;
+        GIT_DIRTY = if (commit == "") then "clean" else "dirty";
+        GIT_TAG = "v${trim (readFile "${finalAttrs.src}/VERSION")}";
+      };
 
       depsBuildBuild = [
         pkg-config
@@ -116,6 +127,7 @@ in
 
       nativeBuildInputs = [
         hyprwayland-scanner
+        hyprwire
         makeWrapper
         cmake
         pkg-config
@@ -132,18 +144,21 @@ in
           aquamarine
           cairo
           git
-          glaze
+          glaze-hyprland
+          gtest
           hyprcursor
           hyprgraphics
           hyprland-protocols
           hyprlang
           hyprutils
+          hyprwire
           libdrm
           libGL
           libinput
           libuuid
           libxkbcommon
           libgbm
+          muparser
           pango
           pciutils
           re2
@@ -178,24 +193,40 @@ in
       dontStrip = debug;
 
       cmakeFlags = mapAttrsToList cmakeBool {
+        "BUILT_WITH_NIX" = true;
         "NO_XWAYLAND" = !enableXWayland;
         "LEGACY_RENDERER" = legacyRenderer;
         "NO_SYSTEMD" = !withSystemd;
         "CMAKE_DISABLE_PRECOMPILE_HEADERS" = true;
-        "NO_UWSM" = true;
+        "NO_UWSM" = !withSystemd;
         "NO_HYPRPM" = true;
         "TRACY_ENABLE" = false;
+        "WITH_TESTS" = withTests;
       };
+
+      preConfigure = ''
+        substituteInPlace hyprtester/CMakeLists.txt --replace-fail \
+          "\''${CMAKE_CURRENT_BINARY_DIR}" \
+          "${placeholder "out"}/bin"
+      '';
 
       postInstall = ''
         ${optionalString wrapRuntimeDeps ''
           wrapProgram $out/bin/Hyprland \
             --suffix PATH : ${makeBinPath [
             binutils
-            hyprland-qtutils
+            hyprland-guiutils
             pciutils
             pkgconf
           ]}
+        ''}
+
+        ${optionalString withTests ''
+          install hyprtester/pointer-warp -t $out/bin
+          install hyprtester/pointer-scroll -t $out/bin
+          install hyprtester/shortcut-inhibitor -t $out/bin
+          install hyprland_gtests -t $out/bin
+          install hyprtester/child-window -t $out/bin
         ''}
       '';
 

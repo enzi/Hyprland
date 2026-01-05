@@ -24,11 +24,13 @@ in {
     inputs.hyprcursor.overlays.default
     inputs.hyprgraphics.overlays.default
     inputs.hyprland-protocols.overlays.default
-    inputs.hyprland-qtutils.overlays.default
+    inputs.hyprland-guiutils.overlays.default
     inputs.hyprlang.overlays.default
     inputs.hyprutils.overlays.default
     inputs.hyprwayland-scanner.overlays.default
+    inputs.hyprwire.overlays.default
     self.overlays.udis86
+    self.overlays.glaze
 
     # Hyprland packages themselves
     (final: _prev: let
@@ -43,9 +45,14 @@ in {
       };
       hyprland-unwrapped = final.hyprland.override {wrapRuntimeDeps = false;};
 
-      hyprtester = final.callPackage ./hyprtester.nix {
-        inherit version;
-      };
+      hyprland-with-tests = final.hyprland.override {withTests = true;};
+
+      hyprland-with-hyprtester =
+        builtins.trace ''
+          hyprland-with-hyprtester was removed. Please use the hyprland package.
+          Hyprtester is always built now.
+        ''
+        final.hyprland;
 
       # deprecated packages
       hyprland-legacy-renderer =
@@ -103,5 +110,14 @@ in {
 
       patches = [];
     });
+  };
+
+  # Even though glaze itself disables it by default, nixpkgs sets ENABLE_SSL set to true.
+  # Since we don't include openssl, the build failes without the `enableSSL = false;` override
+  glaze = final: prev: {
+    glaze-hyprland = prev.glaze.override {
+      enableSSL = false;
+      enableInterop = false;
+    };
   };
 }

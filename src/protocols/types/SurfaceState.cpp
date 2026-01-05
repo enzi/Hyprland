@@ -29,7 +29,7 @@ CRegion SSurfaceState::accumulateBufferDamage() {
 
     Vector2D trc = transform % 2 == 1 ? Vector2D{bufferSize.y, bufferSize.x} : bufferSize;
 
-    bufferDamage = surfaceDamage.scale(scale).transform(wlTransformToHyprutils(invertTransform(transform)), trc.x, trc.y).add(bufferDamage);
+    bufferDamage = surfaceDamage.scale(scale).transform(Math::wlTransformToHyprutils(Math::invertTransform(transform)), trc.x, trc.y).add(bufferDamage);
     damage.clear();
     return bufferDamage;
 }
@@ -62,16 +62,15 @@ void SSurfaceState::reset() {
     bufferDamage.clear();
 
     callbacks.clear();
+    lockMask = LOCK_REASON_NONE;
 }
 
 void SSurfaceState::updateFrom(SSurfaceState& ref) {
     updated = ref.updated;
 
     if (ref.updated.bits.buffer) {
-        if (!ref.buffer.m_buffer)
-            texture.reset(); // null buffer reset texture.
-
         buffer     = ref.buffer;
+        texture    = ref.texture;
         size       = ref.size;
         bufferSize = ref.bufferSize;
     }

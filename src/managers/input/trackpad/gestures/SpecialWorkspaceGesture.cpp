@@ -1,7 +1,7 @@
 #include "SpecialWorkspaceGesture.hpp"
 
 #include "../../../../Compositor.hpp"
-#include "../../../../managers/LayoutManager.hpp"
+#include "../../../../desktop/state/FocusState.hpp"
 #include "../../../../render/Renderer.hpp"
 
 #include <hyprutils/memory/Casts.hpp>
@@ -36,7 +36,7 @@ void CSpecialWorkspaceGesture::begin(const ITrackpadGesture::STrackpadGestureBeg
 
     if (m_specialWorkspace) {
         m_animatingOut = m_specialWorkspace->isVisible();
-        m_monitor      = m_animatingOut ? m_specialWorkspace->m_monitor : g_pCompositor->m_lastMonitor;
+        m_monitor      = m_animatingOut ? m_specialWorkspace->m_monitor : Desktop::focusState()->monitor();
 
         if (!m_monitor)
             return;
@@ -44,15 +44,15 @@ void CSpecialWorkspaceGesture::begin(const ITrackpadGesture::STrackpadGestureBeg
         if (!m_animatingOut)
             m_monitor->setSpecialWorkspace(m_specialWorkspace);
     } else {
-        m_monitor = g_pCompositor->m_lastMonitor;
+        m_monitor = Desktop::focusState()->monitor();
 
         if (!m_monitor)
             return;
 
         m_animatingOut = false;
 
-        const auto& [workspaceID, workspaceName] = getWorkspaceIDNameFromString("special:" + m_specialWorkspaceName);
-        const auto WS                            = g_pCompositor->createNewWorkspace(workspaceID, m_monitor->m_id, workspaceName);
+        const auto& [workspaceID, workspaceName, isAutoID] = getWorkspaceIDNameFromString("special:" + m_specialWorkspaceName);
+        const auto WS                                      = g_pCompositor->createNewWorkspace(workspaceID, m_monitor->m_id, workspaceName);
         m_monitor->setSpecialWorkspace(WS);
         m_specialWorkspace = WS;
     }

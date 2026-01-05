@@ -17,7 +17,18 @@
 #include <sstream>
 
 APICALL const char* __hyprland_api_get_hash() {
-    return GIT_COMMIT_HASH;
+    static auto stripPatch = [](const char* ver) -> std::string {
+        std::string_view v = ver;
+        if (!v.contains('.'))
+            return std::string{v};
+
+        return std::string{v.substr(0, v.find_last_of('.'))};
+    };
+
+    static const std::string ver = (std::string{GIT_COMMIT_HASH} + "_aq_" + stripPatch(AQUAMARINE_VERSION) + "_hu_" + stripPatch(HYPRUTILS_VERSION) + "_hg_" +
+                                    stripPatch(HYPRGRAPHICS_VERSION) + "_hc_" + stripPatch(HYPRCURSOR_VERSION) + "_hlg_" + stripPatch(HYPRLANG_VERSION));
+
+    return ver.c_str();
 }
 
 APICALL SP<HOOK_CALLBACK_FN> HyprlandAPI::registerCallbackDynamic(HANDLE handle, const std::string& event, HOOK_CALLBACK_FN fn) {
@@ -339,11 +350,11 @@ APICALL std::vector<SFunctionMatch> HyprlandAPI::findFunctionsByName(HANDLE hand
     };
 
     if (SYMBOLS.empty()) {
-        Debug::log(ERR, R"(Unable to search for function "{}": no symbols found in binary (is "{}" in path?))", name,
+        Log::logger->log(Log::ERR, R"(Unable to search for function "{}": no symbols found in binary (is "{}" in path?))", name,
 #ifdef __clang__
-                   "llvm-nm"
+                         "llvm-nm"
 #else
-                   "nm"
+                         "nm"
 #endif
         );
         return {};
@@ -396,7 +407,7 @@ APICALL bool HyprlandAPI::unregisterHyprCtlCommand(HANDLE handle, SP<SHyprCtlCom
     if (!PLUGIN)
         return false;
 
-    std::erase(PLUGIN->m_registeredHyprctlCommands, cmd);
+    std::erase_if(PLUGIN->m_registeredHyprctlCommands, [&](const auto& other) { return !other || other == cmd; });
     g_pHyprCtl->unregisterCommand(cmd);
 
     return true;

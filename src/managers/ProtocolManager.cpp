@@ -57,14 +57,14 @@
 #include "../protocols/core/Output.hpp"
 #include "../protocols/core/Shm.hpp"
 #include "../protocols/ColorManagement.hpp"
-#include "../protocols/XXColorManagement.hpp"
-#include "../protocols/FrogColorManagement.hpp"
 #include "../protocols/ContentType.hpp"
 #include "../protocols/XDGTag.hpp"
 #include "../protocols/XDGBell.hpp"
 #include "../protocols/ExtWorkspace.hpp"
 #include "../protocols/ExtDataDevice.hpp"
 #include "../protocols/PointerWarp.hpp"
+#include "../protocols/Fifo.hpp"
+#include "../protocols/CommitTiming.hpp"
 
 #include "../helpers/Monitor.hpp"
 #include "../render/Renderer.hpp"
@@ -97,16 +97,15 @@ void CProtocolManager::onMonitorModeChange(PHLMONITOR pMonitor) {
     }
 
     if (PROTO::colorManagement && g_pCompositor->shouldChangePreferredImageDescription()) {
-        Debug::log(ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
+        Log::logger->log(Log::ERR, "FIXME: color management protocol is enabled, need a preferred image description id");
         PROTO::colorManagement->onImagePreferredChanged(0);
     }
 }
 
 CProtocolManager::CProtocolManager() {
 
-    static const auto PENABLECM   = CConfigValue<Hyprlang::INT>("render:cm_enabled");
-    static const auto PENABLEXXCM = CConfigValue<Hyprlang::INT>("experimental:xx_color_management_v4");
-    static const auto PDEBUGCM    = CConfigValue<Hyprlang::INT>("debug:full_cm_proto");
+    static const auto PENABLECM = CConfigValue<Hyprlang::INT>("render:cm_enabled");
+    static const auto PDEBUGCM  = CConfigValue<Hyprlang::INT>("debug:full_cm_proto");
 
     // Outputs are a bit dumb, we have to agree.
     static auto P = g_pHookSystem->hookDynamic("monitorAdded", [this](void* self, SCallbackInfo& info, std::any param) {
@@ -148,7 +147,7 @@ CProtocolManager::CProtocolManager() {
     PROTO::tearing             = makeUnique<CTearingControlProtocol>(&wp_tearing_control_manager_v1_interface, 1, "TearingControl");
     PROTO::fractional          = makeUnique<CFractionalScaleProtocol>(&wp_fractional_scale_manager_v1_interface, 1, "FractionalScale");
     PROTO::xdgOutput           = makeUnique<CXDGOutputProtocol>(&zxdg_output_manager_v1_interface, 3, "XDGOutput");
-    PROTO::cursorShape         = makeUnique<CCursorShapeProtocol>(&wp_cursor_shape_manager_v1_interface, 1, "CursorShape");
+    PROTO::cursorShape         = makeUnique<CCursorShapeProtocol>(&wp_cursor_shape_manager_v1_interface, 2, "CursorShape");
     PROTO::idleInhibit         = makeUnique<CIdleInhibitProtocol>(&zwp_idle_inhibit_manager_v1_interface, 1, "IdleInhibit");
     PROTO::relativePointer     = makeUnique<CRelativePointerProtocol>(&zwp_relative_pointer_manager_v1_interface, 1, "RelativePointer");
     PROTO::xdgDecoration       = makeUnique<CXDGDecorationProtocol>(&zxdg_decoration_manager_v1_interface, 1, "XDGDecoration");
@@ -194,14 +193,11 @@ CProtocolManager::CProtocolManager() {
     PROTO::extWorkspace        = makeUnique<CExtWorkspaceProtocol>(&ext_workspace_manager_v1_interface, 1, "ExtWorkspace");
     PROTO::extDataDevice       = makeUnique<CExtDataDeviceProtocol>(&ext_data_control_manager_v1_interface, 1, "ExtDataDevice");
     PROTO::pointerWarp         = makeUnique<CPointerWarpProtocol>(&wp_pointer_warp_v1_interface, 1, "PointerWarp");
+    PROTO::fifo                = makeUnique<CFifoProtocol>(&wp_fifo_manager_v1_interface, 1, "Fifo");
+    PROTO::commitTiming        = makeUnique<CCommitTimingProtocol>(&wp_commit_timing_manager_v1_interface, 1, "CommitTiming");
 
     if (*PENABLECM)
         PROTO::colorManagement = makeUnique<CColorManagementProtocol>(&wp_color_manager_v1_interface, 1, "ColorManagement", *PDEBUGCM);
-
-    if (*PENABLEXXCM && *PENABLECM) {
-        PROTO::xxColorManagement   = makeUnique<CXXColorManagementProtocol>(&xx_color_manager_v4_interface, 1, "XXColorManagement");
-        PROTO::frogColorManagement = makeUnique<CFrogColorManagementProtocol>(&frog_color_management_factory_v1_interface, 1, "FrogColorManagement");
-    }
 
     // ! please read the top of this file before adding another protocol
 
@@ -218,9 +214,9 @@ CProtocolManager::CProtocolManager() {
         if (g_pHyprOpenGL->m_exts.EGL_ANDROID_native_fence_sync_ext && !PROTO::sync) {
             if (g_pCompositor->supportsDrmSyncobjTimeline()) {
                 PROTO::sync = makeUnique<CDRMSyncobjProtocol>(&wp_linux_drm_syncobj_manager_v1_interface, 1, "DRMSyncobj");
-                Debug::log(LOG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
+                Log::logger->log(Log::DEBUG, "DRM Syncobj Timeline support detected, enabling explicit sync protocol");
             } else
-                Debug::log(WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
+                Log::logger->log(Log::WARN, "DRM Syncobj Timeline not supported, skipping explicit sync protocol");
         }
     }
 
@@ -228,7 +224,7 @@ CProtocolManager::CProtocolManager() {
         PROTO::mesaDRM  = makeUnique<CMesaDRMProtocol>(&wl_drm_interface, 2, "MesaDRM");
         PROTO::linuxDma = makeUnique<CLinuxDMABufV1Protocol>(&zwp_linux_dmabuf_v1_interface, 5, "LinuxDMABUF");
     } else
-        Debug::log(WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
+        Log::logger->log(Log::WARN, "ProtocolManager: Not binding linux-dmabuf and MesaDRM: DMABUF not available");
 }
 
 CProtocolManager::~CProtocolManager() {
@@ -291,13 +287,13 @@ CProtocolManager::~CProtocolManager() {
     PROTO::hyprlandSurface.reset();
     PROTO::contentType.reset();
     PROTO::colorManagement.reset();
-    PROTO::xxColorManagement.reset();
-    PROTO::frogColorManagement.reset();
     PROTO::xdgTag.reset();
     PROTO::xdgBell.reset();
     PROTO::extWorkspace.reset();
     PROTO::extDataDevice.reset();
     PROTO::pointerWarp.reset();
+    PROTO::fifo.reset();
+    PROTO::commitTiming.reset();
 
     for (auto& [_, lease] : PROTO::lease) {
         lease.reset();
@@ -340,9 +336,6 @@ bool CProtocolManager::isGlobalPrivileged(const wl_global* global) {
         PROTO::constraints->getGlobal(),
         PROTO::activation->getGlobal(),
         PROTO::idle->getGlobal(),
-        PROTO::ime->getGlobal(),
-        PROTO::virtualKeyboard->getGlobal(),
-        PROTO::virtualPointer->getGlobal(),
         PROTO::serverDecorationKDE->getGlobal(),
         PROTO::tablet->getGlobal(),
         PROTO::presentation->getGlobal(),
@@ -353,6 +346,8 @@ bool CProtocolManager::isGlobalPrivileged(const wl_global* global) {
 		PROTO::hyprlandSurface->getGlobal(),
 		PROTO::xdgTag->getGlobal(),
 		PROTO::xdgBell->getGlobal(),
+        PROTO::fifo->getGlobal(),
+        PROTO::commitTiming->getGlobal(),
         PROTO::sync     ? PROTO::sync->getGlobal()      : nullptr,
         PROTO::mesaDRM  ? PROTO::mesaDRM->getGlobal()   : nullptr,
         PROTO::linuxDma ? PROTO::linuxDma->getGlobal()  : nullptr,

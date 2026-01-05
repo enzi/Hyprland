@@ -7,6 +7,7 @@
 #include "../managers/animation/AnimationManager.hpp"
 #include "../render/Renderer.hpp"
 #include "../managers/HookSystemManager.hpp"
+#include "../desktop/state/FocusState.hpp"
 
 #include <hyprutils/utils/ScopeGuard.hpp>
 using namespace Hyprutils::Animation;
@@ -18,7 +19,7 @@ CHyprError::CHyprError() {
         if (!m_isCreated)
             return;
 
-        g_pHyprRenderer->damageMonitor(g_pCompositor->m_lastMonitor.lock());
+        g_pHyprRenderer->damageMonitor(Desktop::focusState()->monitor());
         m_monitorChanged = true;
     });
 
@@ -82,7 +83,8 @@ void CHyprError::createQueued() {
     const double X      = PAD;
     const double Y      = TOPBAR ? PAD : PMONITOR->m_pixelSize.y - HEIGHT - PAD;
 
-    m_damageBox = {0, 0, sc<int>(PMONITOR->m_pixelSize.x), sc<int>(HEIGHT) + sc<int>(PAD) * 2};
+    m_damageBox = {sc<int>(PMONITOR->m_position.x), sc<int>(PMONITOR->m_position.y + (TOPBAR ? 0 : PMONITOR->m_pixelSize.y - (HEIGHT + PAD * 2))), sc<int>(PMONITOR->m_pixelSize.x),
+                   sc<int>(HEIGHT + PAD * 2)};
 
     cairo_new_sub_path(CAIRO);
     cairo_arc(CAIRO, X + WIDTH - RADIUS, Y + RADIUS, RADIUS, -90 * DEGREES, 0 * DEGREES);
@@ -110,6 +112,8 @@ void CHyprError::createQueued() {
     pango_font_description_set_style(pangoFD, PANGO_STYLE_NORMAL);
     pango_font_description_set_weight(pangoFD, PANGO_WEIGHT_NORMAL);
     pango_layout_set_font_description(layoutText, pangoFD);
+    pango_layout_set_width(layoutText, (WIDTH - 2 * (1 + RADIUS)) * PANGO_SCALE);
+    pango_layout_set_ellipsize(layoutText, PANGO_ELLIPSIZE_END);
 
     float yoffset     = TOPBAR ? 0 : Y - PAD;
     int   renderedcnt = 0;
@@ -131,9 +135,8 @@ void CHyprError::createQueued() {
         pango_layout_set_text(layoutText, moreString.c_str(), -1);
         pango_cairo_show_layout(CAIRO, layoutText);
     }
-    m_queued = "";
 
-    m_lastHeight = yoffset + PAD + 1 - (TOPBAR ? 0 : Y - PAD);
+    m_lastHeight = HEIGHT;
 
     pango_font_description_free(pangoFD);
     g_object_unref(layoutText);
@@ -161,7 +164,15 @@ void CHyprError::createQueued() {
 
     g_pHyprRenderer->damageMonitor(PMONITOR);
 
-    g_pHyprRenderer->arrangeLayersForMonitor(PMONITOR->m_id);
+    for (const auto& m : g_pCompositor->m_monitors) {
+        m->m_reservedArea.resetType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR);
+    }
+
+    PMONITOR->m_reservedArea.addType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR, Vector2D{0.0, *BAR_POSITION == 0 ? HEIGHT : 0.0}, Vector2D{0.0, *BAR_POSITION != 0 ? HEIGHT : 0.0});
+
+    for (const auto& m : g_pCompositor->m_monitors) {
+        g_pHyprRenderer->arrangeLayersForMonitor(m->m_id);
+    }
 }
 
 void CHyprError::draw() {
@@ -191,12 +202,13 @@ void CHyprError::draw() {
         }
     }
 
-    const auto PMONITOR = g_pHyprOpenGL->m_renderData.pMonitor;
+    const auto  PMONITOR = g_pHyprOpenGL->m_renderData.pMonitor;
 
-    CBox       monbox = {0, 0, PMONITOR->m_pixelSize.x, PMONITOR->m_pixelSize.y};
+    CBox        monbox = {0, 0, PMONITOR->m_pixelSize.x, PMONITOR->m_pixelSize.y};
 
-    m_damageBox.x = sc<int>(PMONITOR->m_position.x);
-    m_damageBox.y = sc<int>(PMONITOR->m_position.y);
+    static auto BAR_POSITION = CConfigValue<Hyprlang::INT>("debug:error_position");
+    m_damageBox.x            = sc<int>(PMONITOR->m_position.x);
+    m_damageBox.y            = sc<int>(PMONITOR->m_position.y + (*BAR_POSITION == 0 ? 0 : PMONITOR->m_pixelSize.y - m_damageBox.height));
 
     if (m_fadeOpacity->isBeingAnimated() || m_monitorChanged)
         g_pHyprRenderer->damageBox(m_damageBox);

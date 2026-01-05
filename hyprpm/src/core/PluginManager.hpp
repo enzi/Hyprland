@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
+#include "Plugin.hpp"
 
 enum eHeadersErrors {
     HEADERS_OK = 0,
@@ -11,6 +13,7 @@ enum eHeadersErrors {
     HEADERS_MISSING,
     HEADERS_CORRUPTED,
     HEADERS_MISMATCHED,
+    HEADERS_ABI_MISMATCH,
     HEADERS_DUPLICATED
 };
 
@@ -36,6 +39,7 @@ struct SHyprlandVersion {
     std::string branch;
     std::string hash;
     std::string date;
+    std::string abiHash;
     int         commits = 0;
 };
 
@@ -44,7 +48,7 @@ class CPluginManager {
     CPluginManager();
 
     bool                   addNewPluginRepo(const std::string& url, const std::string& rev);
-    bool                   removePluginRepo(const std::string& urlOrName);
+    bool                   removePluginRepo(const SPluginRepoIdentifier identifier);
 
     eHeadersErrors         headersValid();
     bool                   updateHeaders(bool force = false);
@@ -52,8 +56,8 @@ class CPluginManager {
 
     void                   listAllPlugins();
 
-    bool                   enablePlugin(const std::string& name);
-    bool                   disablePlugin(const std::string& name);
+    bool                   enablePlugin(const SPluginRepoIdentifier identifier);
+    bool                   disablePlugin(const SPluginRepoIdentifier identifier);
     ePluginLoadStateReturn ensurePluginsLoadState(bool forceReload = false);
 
     bool                   loadUnloadPlugin(const std::string& path, bool load);

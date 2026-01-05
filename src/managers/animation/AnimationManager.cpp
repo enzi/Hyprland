@@ -6,8 +6,8 @@
 #include "../../helpers/AnimatedVariable.hpp"
 #include "../../macros.hpp"
 #include "../../config/ConfigValue.hpp"
-#include "../../desktop/Window.hpp"
-#include "../../desktop/LayerSurface.hpp"
+#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/LayerSurface.hpp"
 #include "../eventLoop/EventLoopManager.hpp"
 #include "../../helpers/varlist/VarList.hpp"
 #include "../../render/Renderer.hpp"
@@ -18,16 +18,7 @@
 
 static int wlTick(SP<CEventLoopTimer> self, void* data) {
     if (g_pAnimationManager)
-        g_pAnimationManager->onTicked();
-
-    if (g_pCompositor->m_sessionActive && g_pAnimationManager && g_pHookSystem && !g_pCompositor->m_unsafeState &&
-        std::ranges::any_of(g_pCompositor->m_monitors, [](const auto& mon) { return mon->m_enabled && mon->m_output; })) {
-        g_pAnimationManager->tick();
-        EMIT_HOOK_EVENT("tick", nullptr);
-    }
-
-    if (g_pAnimationManager && g_pAnimationManager->shouldTickForNext())
-        g_pAnimationManager->scheduleTick();
+        g_pAnimationManager->frameTick();
 
     return 0;
 }
@@ -98,7 +89,7 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
         if (!PMONITOR)
             return;
 
-        animationsDisabled = PWINDOW->m_windowData.noAnim.valueOr(animationsDisabled);
+        animationsDisabled = PWINDOW->m_ruleApplicator->noAnim().valueOr(animationsDisabled);
     } else if (PWORKSPACE) {
         PMONITOR = PWORKSPACE->m_monitor.lock();
         if (!PMONITOR)
@@ -142,7 +133,7 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
         PMONITOR = g_pCompositor->getMonitorFromVector(PLAYER->m_realPosition->goal() + PLAYER->m_realSize->goal() / 2.F);
         if (!PMONITOR)
             return;
-        animationsDisabled = animationsDisabled || PLAYER->m_noAnimations;
+        animationsDisabled = animationsDisabled || PLAYER->m_ruleApplicator->noanim().valueOrDefault();
     }
 
     const auto SPENT   = av.getPercent();
@@ -218,35 +209,60 @@ void CHyprAnimationManager::tick() {
 
     static auto PANIMENABLED = CConfigValue<Hyprlang::INT>("animations:enabled");
 
-    for (size_t i = 0; i < m_vActiveAnimatedVariables.size(); i++) {
-        const auto PAV = m_vActiveAnimatedVariables[i].lock();
-        if (!PAV)
-            continue;
+    if (!m_vActiveAnimatedVariables.empty()) {
+        const auto CPY = m_vActiveAnimatedVariables;
 
-        // for disabled anims just warp
-        bool warp = !*PANIMENABLED || !PAV->enabled();
+        for (const auto& PAV : CPY) {
+            if (!PAV)
+                continue;
 
-        switch (PAV->m_Type) {
-            case AVARTYPE_FLOAT: {
-                auto pTypedAV = dc<CAnimatedVariable<float>*>(PAV.get());
-                RASSERT(pTypedAV, "Failed to upcast animated float");
-                handleUpdate(*pTypedAV, warp);
-            } break;
-            case AVARTYPE_VECTOR: {
-                auto pTypedAV = dc<CAnimatedVariable<Vector2D>*>(PAV.get());
-                RASSERT(pTypedAV, "Failed to upcast animated Vector2D");
-                handleUpdate(*pTypedAV, warp);
-            } break;
-            case AVARTYPE_COLOR: {
-                auto pTypedAV = dc<CAnimatedVariable<CHyprColor>*>(PAV.get());
-                RASSERT(pTypedAV, "Failed to upcast animated CHyprColor");
-                handleUpdate(*pTypedAV, warp);
-            } break;
-            default: UNREACHABLE();
+            // for disabled anims just warp
+            bool warp = !*PANIMENABLED || !PAV->enabled();
+
+            switch (PAV->m_Type) {
+                case AVARTYPE_FLOAT: {
+                    auto pTypedAV = dc<CAnimatedVariable<float>*>(PAV.get());
+                    RASSERT(pTypedAV, "Failed to upcast animated float");
+                    handleUpdate(*pTypedAV, warp);
+                } break;
+                case AVARTYPE_VECTOR: {
+                    auto pTypedAV = dc<CAnimatedVariable<Vector2D>*>(PAV.get());
+                    RASSERT(pTypedAV, "Failed to upcast animated Vector2D");
+                    handleUpdate(*pTypedAV, warp);
+                } break;
+                case AVARTYPE_COLOR: {
+                    auto pTypedAV = dc<CAnimatedVariable<CHyprColor>*>(PAV.get());
+                    RASSERT(pTypedAV, "Failed to upcast animated CHyprColor");
+                    handleUpdate(*pTypedAV, warp);
+                } break;
+                default: UNREACHABLE();
+            }
         }
     }
 
     tickDone();
+}
+
+void CHyprAnimationManager::frameTick() {
+    onTicked();
+
+    if (!shouldTickForNext())
+        return;
+
+    if (!g_pCompositor->m_sessionActive || !g_pHookSystem || g_pCompositor->m_unsafeState ||
+        !std::ranges::any_of(g_pCompositor->m_monitors, [](const auto& mon) { return mon->m_enabled && mon->m_output; }))
+        return;
+
+    if (!m_lastTickValid || m_lastTickTimer.getMillis() >= 1.0f) {
+        m_lastTickTimer.reset();
+        m_lastTickValid = true;
+
+        tick();
+        EMIT_HOOK_EVENT("tick", nullptr);
+    }
+
+    if (shouldTickForNext())
+        scheduleTick();
 }
 
 void CHyprAnimationManager::scheduleTick() {
@@ -255,20 +271,12 @@ void CHyprAnimationManager::scheduleTick() {
 
     m_tickScheduled = true;
 
-    const auto PMOSTHZ = g_pHyprRenderer->m_mostHzMonitor;
-
-    if (!PMOSTHZ) {
-        m_animationTimer->updateTimeout(std::chrono::milliseconds(16));
+    if (!m_animationTimer || !g_pEventLoopManager) {
+        m_tickScheduled = false;
         return;
     }
 
-    float       refreshDelayMs = std::floor(1000.f / PMOSTHZ->m_refreshRate);
-
-    const float SINCEPRES = std::chrono::duration_cast<std::chrono::microseconds>(Time::steadyNow() - PMOSTHZ->m_lastPresentationTimer.chrono()).count() / 1000.F;
-
-    const auto  TOPRES = std::clamp(refreshDelayMs - SINCEPRES, 1.1f, 1000.f); // we can't send 0, that will disarm it
-
-    m_animationTimer->updateTimeout(std::chrono::milliseconds(sc<int>(std::floor(TOPRES))));
+    m_animationTimer->updateTimeout(std::chrono::milliseconds(1));
 }
 
 void CHyprAnimationManager::onTicked() {
