@@ -1597,34 +1597,6 @@ bool CWindow::isX11Popup() {
     return false;
 }
 
-Vector2D CWindow::requestedMinSize() {
-    bool hasSizeHints = m_xwaylandSurface ? m_xwaylandSurface->m_sizeHints : false;
-    bool hasTopLevel  = m_xdgSurface ? m_xdgSurface->m_toplevel : false;
-    if ((m_isX11 && !hasSizeHints) || (!m_isX11 && !hasTopLevel))
-        return Vector2D(1, 1);
-
-    Vector2D minSize = m_isX11 ? Vector2D(m_xwaylandSurface->m_sizeHints->min_width, m_xwaylandSurface->m_sizeHints->min_height) : m_xdgSurface->m_toplevel->layoutMinSize();
-
-    minSize = minSize.clamp({1, 1});
-
-    return minSize;
-}
-
-Vector2D CWindow::requestedMaxSize() {
-    constexpr int NO_MAX_SIZE_LIMIT = 99999;
-    if (((m_isX11 && !m_xwaylandSurface->m_sizeHints) || (!m_isX11 && (!m_xdgSurface || !m_xdgSurface->m_toplevel)) || m_windowData.noMaxSize.valueOrDefault()))
-        return Vector2D(NO_MAX_SIZE_LIMIT, NO_MAX_SIZE_LIMIT);
-
-    Vector2D maxSize = m_isX11 ? Vector2D(m_xwaylandSurface->m_sizeHints->max_width, m_xwaylandSurface->m_sizeHints->max_height) : m_xdgSurface->m_toplevel->layoutMaxSize();
-
-    if (maxSize.x < 5)
-        maxSize.x = NO_MAX_SIZE_LIMIT;
-    if (maxSize.y < 5)
-        maxSize.y = NO_MAX_SIZE_LIMIT;
-
-    return maxSize;
-}
-
 Vector2D CWindow::realToReportSize() {
     if (!m_isX11)
         return m_realSize->goal().clamp(Vector2D{0, 0}, Math::VECTOR2D_MAX);
@@ -2333,17 +2305,21 @@ void CWindow::mapWindow() {
     if (!m_ruleApplicator->noFocus().valueOrDefault() && !m_noInitialFocus && (!isX11OverrideRedirect() || (m_isX11 && m_xwaylandSurface->wantsFocus())) && !workspaceSilent &&
         (!PFORCEFOCUS || PFORCEFOCUS == m_self.lock()) && !g_pInputManager->isConstrained()) {
 
-        // this window should gain focus: if it's grouped, preserve fullscreen state.
-        const bool SAME_GROUP = hasInGroup(LAST_FOCUS_WINDOW);
+        // don't steal pointer focus with X11 when buttons are held (e.g., during drags)
+        if (!(m_isX11 && g_pInputManager->hasHeldButtons())) {
 
-        if (IS_LAST_IN_FS && SAME_GROUP) {
-            Desktop::focusState()->rawWindowFocus(m_self.lock());
-            g_pCompositor->setWindowFullscreenInternal(m_self.lock(), LAST_FS_MODE);
-        } else
-            Desktop::focusState()->fullWindowFocus(m_self.lock());
+            // this window should gain focus: if it's grouped, preserve fullscreen state.
+            const bool SAME_GROUP = hasInGroup(LAST_FOCUS_WINDOW);
 
-        m_activeInactiveAlpha->setValueAndWarp(*PACTIVEALPHA);
-        m_dimPercent->setValueAndWarp(m_ruleApplicator->noDim().valueOrDefault() ? 0.f : *PDIMSTRENGTH);
+            if (IS_LAST_IN_FS && SAME_GROUP) {
+                Desktop::focusState()->rawWindowFocus(m_self.lock());
+                g_pCompositor->setWindowFullscreenInternal(m_self.lock(), LAST_FS_MODE);
+            } else
+                Desktop::focusState()->fullWindowFocus(m_self.lock());
+
+            m_activeInactiveAlpha->setValueAndWarp(*PACTIVEALPHA);
+            m_dimPercent->setValueAndWarp(m_ruleApplicator->noDim().valueOrDefault() ? 0.f : *PDIMSTRENGTH);
+        }
     } else {
         m_activeInactiveAlpha->setValueAndWarp(*PINACTIVEALPHA);
         m_dimPercent->setValueAndWarp(0);
